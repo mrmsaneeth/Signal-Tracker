@@ -424,11 +424,8 @@ function setPlatform(p, el){
 
 // ─── Map asset name → Twelve Data symbol ───
 function toTDSymbol(asset){
-  // Strip " OTC" suffix, replace / with
-  const base = asset.replace(' OTC','');
-  const parts = base.split('/');
-  if(parts.length === 2) return parts[0] + parts[1]; // e.g. EURUSD
-  return base;
+  // Strip " OTC" suffix — keep the slash e.g. "EUR/USD OTC" → "EUR/USD"
+  return asset.replace(' OTC','').trim();
 }
 
 // ─── Fetch live candles from Twelve Data ───
