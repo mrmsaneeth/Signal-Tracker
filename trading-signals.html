@@ -591,10 +591,50 @@ function toTDSymbol(asset){
 }
 
 // ─── Fetch live candles from Twelve Data ───
+// Pairs NOT supported by Twelve Data — use currency-api (free, no key)
+const unsupportedPairs = new Set([
+  'AED/CNY','USD/CLP','USD/COP','USD/EGP','USD/IDR',
+  'USD/KES','USD/NGN','USD/PKR','USD/SAR','USD/THB'
+]);
+
+// Fetch live spot price from currency-api (free, no key, 200+ currencies)
+async function fetchExoticPrice(base, quote){
+  try {
+    const url = `https://latest.currency-api.pages.dev/v1/currencies/${base.toLowerCase()}.json`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const rate = data[base.toLowerCase()]?.[quote.toLowerCase()];
+    return rate ? parseFloat(rate) : null;
+  } catch(e) {
+    return null;
+  }
+}
+
 async function fetchLiveCandles(asset, tf){
-  if(!apiKey) return null;
+  if(!apiKey && !unsupportedPairs.has(toTDSymbol(asset))) return null;
+
   const symbol = toTDSymbol(asset);
-  // Map timeframe to Twelve Data interval
+  const parts = symbol.split('/');
+
+  // Route exotic pairs to currency-api
+  if(unsupportedPairs.has(symbol)){
+    setStatus('📡', `Fetching live rate for ${asset}…`, '');
+    const livePrice = await fetchExoticPrice(parts[0], parts[1]);
+    if(livePrice){
+      // Seed realistic candles from the real live price
+      const candles = genCandles(livePrice, 50);
+      // Replace last close with exact live price
+      candles[candles.length-1].c = livePrice;
+      setStatus('✅', `Live price loaded`, `${asset} · ${livePrice}`);
+      return candles;
+    } else {
+      setStatus('📊', `Simulated data (rate unavailable)`, asset);
+      return null;
+    }
+  }
+
+  // Twelve Data for supported pairs
+  if(!apiKey) return null;
   const tfMap = { '30s':'1min', '1m':'1min', '5m':'5min', '15m':'15min' };
   const interval = tfMap[tf] || '1min';
   const url = `https://api.twelvedata.com/time_series?symbol=${symbol}&interval=${interval}&outputsize=50&apikey=${apiKey}`;
@@ -603,10 +643,9 @@ async function fetchLiveCandles(asset, tf){
     const res = await fetch(url);
     const data = await res.json();
     if(data.status === 'error' || !data.values){
-      setStatus('⚠️', data.message || 'API error — using simulated data', asset);
+      setStatus('📊', `Simulated data (pair unavailable via API)`, asset);
       return null;
     }
-    // Twelve Data returns newest first — reverse for chart
     const candles = data.values.reverse().map(v => ({
       o: parseFloat(v.open),
       h: parseFloat(v.high),
@@ -616,7 +655,7 @@ async function fetchLiveCandles(asset, tf){
     setStatus('✅', `Live price loaded`, `${asset} · ${candles[candles.length-1].c.toFixed(5)}`);
     return candles;
   } catch(e) {
-    setStatus('⚠️', 'Network error — using simulated data', asset);
+    setStatus('📊', 'Network error — using simulated data', asset);
     return null;
   }
 }
@@ -787,7 +826,8 @@ async function analyzeNow(){
   let candles = null;
 
   // Try live data first
-  if(apiKey){
+  const symbol = toTDSymbol(asset);
+  if(apiKey || unsupportedPairs.has(symbol)){
     candles = await fetchLiveCandles(asset, tf);
   } else {
     setStatus('⚠️', 'No API key — using simulated prices. Enter your key above.', '');
